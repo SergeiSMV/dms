@@ -1,0 +1,38 @@
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Environment / secrets
+.env
+*.pem
+*.key
+
+# Go
+backend/tmp/
+services/llm-proxy/tmp/
+
+# Flutter
+.dart_tool/
+.packages
+build/
+.flutter-plugins
+.flutter-plugins-dependencies
+pubspec.lock
+*.iml
+.metadata
+
+# Docker
+docker-compose.override.yml
+
+# Backups
+database/backups/
+*.sql.gz
+
+# Artifacts
+artifacts/

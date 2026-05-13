@@ -1,0 +1,5 @@
+.git/
+.env
+.vscode/
+claude_artifacts/
+server
