@@ -54,6 +54,19 @@ func main() {
 	defer dbPool.Close()
 	slog.Info("подключение к БД установлено")
 
+	// --- Миграции ---
+
+	// Путь к папке с SQL-миграциями. Префикс "file://" нужен для golang-migrate.
+	migrationsPath := os.Getenv("MIGRATIONS_PATH")
+	if migrationsPath == "" {
+		migrationsPath = "file://migrations"
+	}
+
+	if err := database.RunMigrations(cfg.Database.DSN(), migrationsPath); err != nil {
+		slog.Error("не удалось применить миграции", "ошибка", err)
+		os.Exit(1)
+	}
+
 	// --- HTTP-сервер ---
 
 	srv := server.New(":" + cfg.Server.Port)
