@@ -15,11 +15,19 @@ import (
 type Config struct {
 	Server   ServerConfig   `yaml:"server"`
 	Database DatabaseConfig `yaml:"database"`
+	LLM      LLMConfig      `yaml:"llm"`
 }
 
 // ServerConfig — настройки HTTP-сервера.
 type ServerConfig struct {
 	Port string `yaml:"port"`
+}
+
+// LLMConfig — настройки подключения к llm-proxy.
+// URL указывает на контейнер llm-proxy, а не напрямую на Ollama.
+type LLMConfig struct {
+	URL    string `yaml:"url"`
+	APIKey string `yaml:"api_key"`
 }
 
 // DatabaseConfig — настройки подключения к PostgreSQL.
@@ -86,5 +94,11 @@ func applyEnvOverrides(cfg *Config) {
 	}
 	if v := os.Getenv("DB_SSLMODE"); v != "" {
 		cfg.Database.SSLMode = v
+	}
+	if v := os.Getenv("LLM_PROXY_URL"); v != "" {
+		cfg.LLM.URL = v
+	}
+	if v := os.Getenv("LLM_PROXY_API_KEY"); v != "" {
+		cfg.LLM.APIKey = v
 	}
 }

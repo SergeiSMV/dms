@@ -8,3 +8,7 @@ database:
   password: "dms"
   name: "dms"
   ssl_mode: "disable"
+
+llm:
+  url: "http://localhost:8080"
+  api_key: ""
