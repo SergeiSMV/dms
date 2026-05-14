@@ -9,6 +9,11 @@ database:
   name: "dms"
   ssl_mode: "disable"
 
+auth:
+  secret: "dev-secret-change-in-production"
+  access_ttl: 15   # минуты
+  refresh_ttl: 7   # дни
+
 llm:
   url: "http://localhost:8080"
   api_key: ""

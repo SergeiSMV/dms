@@ -8,34 +8,60 @@ import (
 	// chi — легковесный роутер для Go, совместимый со стандартным net/http.
 	"github.com/go-chi/chi/v5"
 	// Набор готовых middleware: логирование запросов, recovery от panic и др.
-	"github.com/go-chi/chi/v5/middleware"
+	chimw "github.com/go-chi/chi/v5/middleware"
+
+	"dms-backend/internal/auth"
+	appmw "dms-backend/internal/middleware"
+	"dms-backend/internal/model"
+	"dms-backend/internal/service"
 )
+
+// Deps — зависимости, которые нужны серверу для создания маршрутов.
+type Deps struct {
+	AuthService  *service.AuthService
+	JWTManager   *auth.JWTManager
+	DefaultOrgID string // ID организации по умолчанию (on-premise — всегда одна)
+}
 
 // New создаёт и возвращает настроенный HTTP-сервер.
 // addr — адрес вида ":8081", на котором сервер будет слушать.
-func New(addr string) *http.Server {
+func New(addr string, deps Deps) *http.Server {
 	r := chi.NewRouter()
 
-	// --- Middleware (обработчики, которые оборачивают каждый запрос) ---
+	// --- Глобальные middleware ---
 
-	// RequestID добавляет уникальный ID к каждому запросу для трассировки.
-	r.Use(middleware.RequestID)
-	// RealIP извлекает реальный IP клиента из заголовков X-Forwarded-For / X-Real-IP.
-	r.Use(middleware.RealIP)
-	// Logger выводит в лог метод, путь, статус и время каждого запроса.
-	r.Use(middleware.Logger)
-	// Recoverer перехватывает panic внутри хендлеров, чтобы сервер не падал.
-	r.Use(middleware.Recoverer)
-	// Timeout ограничивает время обработки одного запроса (защита от зависаний).
-	r.Use(middleware.Timeout(60 * time.Second))
+	r.Use(chimw.RequestID)
+	r.Use(chimw.RealIP)
+	r.Use(chimw.Logger)
+	r.Use(chimw.Recoverer)
+	r.Use(chimw.Timeout(60 * time.Second))
 
-	// --- Маршруты ---
+	// --- Публичные маршруты (без авторизации) ---
 
-	// Эндпоинт проверки работоспособности сервиса (health check).
 	r.Get("/health", handleHealth())
 
-	// http.Server — стандартная структура Go для HTTP-сервера.
-	// Настраиваем таймауты чтения/записи для защиты от медленных клиентов.
+	// Аутентификация: логин и обновление токена не требуют JWT.
+	r.Post("/auth/login", handleLogin(deps.AuthService, deps.DefaultOrgID))
+	r.Post("/auth/refresh", handleRefresh(deps.AuthService))
+
+	// --- Защищённые маршруты (требуют access-токен) ---
+
+	r.Group(func(r chi.Router) {
+		// Auth middleware проверяет JWT и кладёт user_id/org_id/role в контекст.
+		r.Use(appmw.Auth(deps.JWTManager))
+
+		r.Get("/auth/profile", handleProfile(deps.AuthService))
+		r.Post("/auth/change-password", handleChangePassword(deps.AuthService))
+
+		// Admin-маршруты: только для роли admin.
+		r.Group(func(r chi.Router) {
+			r.Use(appmw.RequireRole(model.RoleAdmin))
+
+			r.Post("/admin/users", handleCreateUser(deps.AuthService))
+			r.Get("/admin/users", handleListUsers(deps.AuthService))
+		})
+	})
+
 	return &http.Server{
 		Addr:         addr,
 		Handler:      r,
