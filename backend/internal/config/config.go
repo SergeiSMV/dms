@@ -5,6 +5,7 @@ package config
 import (
 	"fmt"
 	"os"
+	"strconv"
 
 	// Библиотека для парсинга YAML-файлов в Go-структуры.
 	"gopkg.in/yaml.v3"
@@ -15,7 +16,18 @@ import (
 type Config struct {
 	Server   ServerConfig   `yaml:"server"`
 	Database DatabaseConfig `yaml:"database"`
+	Auth     AuthConfig     `yaml:"auth"`
 	LLM      LLMConfig      `yaml:"llm"`
+}
+
+// AuthConfig — настройки аутентификации (JWT-токены).
+type AuthConfig struct {
+	// Secret — секретный ключ для подписи JWT (HMAC-SHA256). Обязательно менять в продакшене!
+	Secret string `yaml:"secret"`
+	// AccessTTL — время жизни access-токена в минутах (по умолчанию 15).
+	AccessTTL int `yaml:"access_ttl"`
+	// RefreshTTL — время жизни refresh-токена в днях (по умолчанию 7).
+	RefreshTTL int `yaml:"refresh_ttl"`
 }
 
 // ServerConfig — настройки HTTP-сервера.
@@ -68,6 +80,17 @@ func Load(path string) (*Config, error) {
 	// Переменные окружения имеют приоритет над YAML — удобно для Docker/CI.
 	applyEnvOverrides(cfg)
 
+	// Значения по умолчанию для auth, если не заданы в YAML.
+	if cfg.Auth.Secret == "" {
+		cfg.Auth.Secret = "CHANGE-ME-IN-PRODUCTION"
+	}
+	if cfg.Auth.AccessTTL == 0 {
+		cfg.Auth.AccessTTL = 15
+	}
+	if cfg.Auth.RefreshTTL == 0 {
+		cfg.Auth.RefreshTTL = 7
+	}
+
 	return cfg, nil
 }
 
@@ -100,5 +123,18 @@ func applyEnvOverrides(cfg *Config) {
 	}
 	if v := os.Getenv("LLM_PROXY_API_KEY"); v != "" {
 		cfg.LLM.APIKey = v
+	}
+	if v := os.Getenv("AUTH_SECRET"); v != "" {
+		cfg.Auth.Secret = v
+	}
+	if v := os.Getenv("AUTH_ACCESS_TTL"); v != "" {
+		if ttl, err := strconv.Atoi(v); err == nil {
+			cfg.Auth.AccessTTL = ttl
+		}
+	}
+	if v := os.Getenv("AUTH_REFRESH_TTL"); v != "" {
+		if ttl, err := strconv.Atoi(v); err == nil {
+			cfg.Auth.RefreshTTL = ttl
+		}
 	}
 }

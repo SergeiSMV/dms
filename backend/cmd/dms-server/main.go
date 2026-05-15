@@ -12,9 +12,12 @@ import (
 	"syscall"
 	"time"
 
+	"dms-backend/internal/auth"
 	"dms-backend/internal/config"
 	"dms-backend/internal/database"
+	"dms-backend/internal/repository"
 	"dms-backend/internal/server"
+	"dms-backend/internal/service"
 )
 
 func main() {
@@ -36,7 +39,6 @@ func main() {
 
 	cfg, err := config.Load(cfgPath)
 	if err != nil {
-		// slog.Error + os.Exit(1) — аналог log.Fatal, но через slog.
 		slog.Error("не удалось загрузить конфигурацию", "ошибка", err)
 		os.Exit(1)
 	}
@@ -44,19 +46,18 @@ func main() {
 
 	// --- База данных ---
 
-	// context.Background() — пустой контекст, корневой для всего приложения.
-	dbPool, err := database.Connect(context.Background(), cfg.Database.DSN())
+	ctx := context.Background()
+
+	dbPool, err := database.Connect(ctx, cfg.Database.DSN())
 	if err != nil {
 		slog.Error("не удалось подключиться к БД", "ошибка", err)
 		os.Exit(1)
 	}
-	// defer — отложенный вызов: pool.Close() выполнится при выходе из main().
 	defer dbPool.Close()
 	slog.Info("подключение к БД установлено")
 
 	// --- Миграции ---
 
-	// Путь к папке с SQL-миграциями. Префикс "file://" нужен для golang-migrate.
 	migrationsPath := os.Getenv("MIGRATIONS_PATH")
 	if migrationsPath == "" {
 		migrationsPath = "file://migrations"
@@ -67,12 +68,40 @@ func main() {
 		os.Exit(1)
 	}
 
+	// --- Seed: организация и admin при первом запуске ---
+
+	seedResult, err := database.Seed(ctx, dbPool)
+	if err != nil {
+		slog.Error("не удалось выполнить seed", "ошибка", err)
+		os.Exit(1)
+	}
+
+	// --- Инициализация слоёв ---
+
+	// JWT-менеджер с настройками из конфигурации.
+	jwtManager := auth.NewJWTManager(
+		cfg.Auth.Secret,
+		time.Duration(cfg.Auth.AccessTTL)*time.Minute,
+		time.Duration(cfg.Auth.RefreshTTL)*24*time.Hour,
+	)
+
+	// Репозиторий → Сервис → Сервер (слои зависят только «вниз»).
+	userRepo := repository.NewUserRepository(dbPool)
+	orgRepo := repository.NewOrgRepository(dbPool)
+
+	authService := service.NewAuthService(userRepo, jwtManager)
+	orgService := service.NewOrgService(orgRepo)
+
 	// --- HTTP-сервер ---
 
-	srv := server.New(":" + cfg.Server.Port)
+	srv := server.New(":"+cfg.Server.Port, server.Deps{
+		AuthService:  authService,
+		OrgService:   orgService,
+		JWTManager:   jwtManager,
+		DefaultOrgID: seedResult.OrgID,
+	})
 
-	// Запускаем сервер в отдельной горутине (аналог потока),
-	// чтобы main-горутина могла ждать сигнал завершения.
+	// Запускаем сервер в отдельной горутине.
 	go func() {
 		slog.Info("HTTP-сервер запущен", "адрес", srv.Addr)
 		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
@@ -83,22 +112,16 @@ func main() {
 
 	// --- Graceful shutdown ---
 
-	// Создаём канал для получения сигналов ОС.
-	// SIGINT = Ctrl+C, SIGTERM = docker stop / kill -15.
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 
-	// Блокируем main-горутину, пока не придёт сигнал.
 	sig := <-quit
 	slog.Info("получен сигнал завершения", "сигнал", sig.String())
 
-	// Даём серверу 10 секунд на завершение текущих запросов.
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	// Shutdown корректно останавливает сервер: перестаёт принимать новые
-	// соединения и ждёт завершения активных запросов.
-	if err := srv.Shutdown(ctx); err != nil {
+	if err := srv.Shutdown(shutdownCtx); err != nil {
 		slog.Error("ошибка при остановке сервера", "ошибка", err)
 	}
 
