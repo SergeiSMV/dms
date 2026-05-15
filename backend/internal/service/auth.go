@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 
+	"dms-backend/internal/appctx"
 	"dms-backend/internal/auth"
 	"dms-backend/internal/model"
 	"dms-backend/internal/repository"
@@ -41,8 +42,9 @@ func NewAuthService(userRepo *repository.UserRepository, jwtManager *auth.JWTMan
 }
 
 // Login проверяет email/пароль и возвращает пару токенов.
-func (s *AuthService) Login(ctx context.Context, orgID, email, password string) (*TokenPair, error) {
-	user, err := s.userRepo.GetByEmail(ctx, orgID, email)
+// org_id должен быть в контексте (через appctx.WithOrgID).
+func (s *AuthService) Login(ctx context.Context, email, password string) (*TokenPair, error) {
+	user, err := s.userRepo.GetByEmail(ctx, email)
 	if err != nil {
 		return nil, ErrInvalidCredentials
 	}
@@ -70,6 +72,9 @@ func (s *AuthService) RefreshTokens(ctx context.Context, refreshToken string) (*
 	if claims.Type != auth.RefreshToken {
 		return nil, ErrInvalidToken
 	}
+
+	// Кладём org_id из refresh-токена в контекст для репозитория.
+	ctx = appctx.WithOrgID(ctx, claims.OrgID)
 
 	// Проверяем, что пользователь всё ещё активен.
 	user, err := s.userRepo.GetByID(ctx, claims.UserID)
@@ -110,9 +115,10 @@ func (s *AuthService) GetProfile(ctx context.Context, userID string) (*model.Use
 }
 
 // CreateUser создаёт нового пользователя (только admin).
-func (s *AuthService) CreateUser(ctx context.Context, orgID, email, password, role string) (*model.User, error) {
+// org_id берётся из контекста.
+func (s *AuthService) CreateUser(ctx context.Context, email, password, role string) (*model.User, error) {
 	// Проверяем, не занят ли email.
-	if existing, _ := s.userRepo.GetByEmail(ctx, orgID, email); existing != nil {
+	if existing, _ := s.userRepo.GetByEmail(ctx, email); existing != nil {
 		return nil, ErrEmailExists
 	}
 
@@ -122,7 +128,6 @@ func (s *AuthService) CreateUser(ctx context.Context, orgID, email, password, ro
 	}
 
 	user := &model.User{
-		OrgID:        orgID,
 		Email:        email,
 		PasswordHash: hash,
 		Role:         role,
@@ -136,9 +141,9 @@ func (s *AuthService) CreateUser(ctx context.Context, orgID, email, password, ro
 	return user, nil
 }
 
-// ListUsers возвращает всех пользователей организации.
-func (s *AuthService) ListUsers(ctx context.Context, orgID string) ([]model.User, error) {
-	return s.userRepo.ListByOrg(ctx, orgID)
+// ListUsers возвращает всех пользователей организации из контекста.
+func (s *AuthService) ListUsers(ctx context.Context) ([]model.User, error) {
+	return s.userRepo.List(ctx)
 }
 
 // generateTokenPair создаёт пару access + refresh токенов для пользователя.

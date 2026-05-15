@@ -2,21 +2,11 @@
 package middleware
 
 import (
-	"context"
 	"net/http"
 	"strings"
 
+	"dms-backend/internal/appctx"
 	"dms-backend/internal/auth"
-)
-
-// contextKey — тип для ключей контекста, чтобы избежать коллизий со строками.
-type contextKey string
-
-const (
-	// Ключи для хранения данных аутентификации в context запроса.
-	UserIDKey contextKey = "user_id"
-	OrgIDKey  contextKey = "org_id"
-	RoleKey   contextKey = "role"
 )
 
 // Auth возвращает middleware, проверяющий JWT в заголовке Authorization.
@@ -51,11 +41,18 @@ func Auth(jwtManager *auth.JWTManager) func(http.Handler) http.Handler {
 				return
 			}
 
-			// Кладём данные пользователя в контекст запроса.
-			// Все последующие хендлеры смогут их достать через GetUserID(ctx) и т.д.
-			ctx := context.WithValue(r.Context(), UserIDKey, claims.UserID)
-			ctx = context.WithValue(ctx, OrgIDKey, claims.OrgID)
-			ctx = context.WithValue(ctx, RoleKey, claims.Role)
+			// Проверяем, что в токене есть обязательные поля.
+			// Без org_id запросы к БД вернут пустые результаты или сломают фильтрацию.
+			if claims.UserID == "" || claims.OrgID == "" {
+				http.Error(w, `{"error":"невалидный токен: отсутствует user_id или org_id"}`, http.StatusUnauthorized)
+				return
+			}
+
+			// Кладём данные пользователя в контекст через appctx.
+			// Репозитории и сервисы читают эти значения для фильтрации по организации.
+			ctx := appctx.WithUserID(r.Context(), claims.UserID)
+			ctx = appctx.WithOrgID(ctx, claims.OrgID)
+			ctx = appctx.WithRole(ctx, claims.Role)
 
 			next.ServeHTTP(w, r.WithContext(ctx))
 		})
@@ -73,7 +70,7 @@ func RequireRole(allowed ...string) func(http.Handler) http.Handler {
 
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			role := GetRole(r.Context())
+			role := appctx.GetRole(r.Context())
 			if !roleSet[role] {
 				http.Error(w, `{"error":"недостаточно прав"}`, http.StatusForbidden)
 				return
@@ -81,22 +78,4 @@ func RequireRole(allowed ...string) func(http.Handler) http.Handler {
 			next.ServeHTTP(w, r)
 		})
 	}
-}
-
-// GetUserID извлекает ID пользователя из контекста запроса.
-func GetUserID(ctx context.Context) string {
-	v, _ := ctx.Value(UserIDKey).(string)
-	return v
-}
-
-// GetOrgID извлекает ID организации из контекста запроса.
-func GetOrgID(ctx context.Context) string {
-	v, _ := ctx.Value(OrgIDKey).(string)
-	return v
-}
-
-// GetRole извлекает роль пользователя из контекста запроса.
-func GetRole(ctx context.Context) string {
-	v, _ := ctx.Value(RoleKey).(string)
-	return v
 }

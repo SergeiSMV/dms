@@ -5,7 +5,7 @@ import (
 	"errors"
 	"net/http"
 
-	"dms-backend/internal/middleware"
+	"dms-backend/internal/appctx"
 	"dms-backend/internal/model"
 	"dms-backend/internal/service"
 )
@@ -39,8 +39,11 @@ func handleLogin(authService *service.AuthService, defaultOrgID string) http.Han
 			return
 		}
 
-		// На on-premise всегда одна организация — используем defaultOrgID.
-		tokens, err := authService.Login(r.Context(), defaultOrgID, req.Email, req.Password)
+		// На on-premise всегда одна организация — кладём defaultOrgID в контекст,
+		// чтобы репозиторий мог автоматически фильтровать по org_id.
+		ctx := appctx.WithOrgID(r.Context(), defaultOrgID)
+
+		tokens, err := authService.Login(ctx, req.Email, req.Password)
 		if err != nil {
 			switch {
 			case errors.Is(err, service.ErrInvalidCredentials):
@@ -63,6 +66,7 @@ type refreshRequest struct {
 }
 
 // handleRefresh — POST /auth/refresh. Принимает refresh-токен, выдаёт новую пару.
+// org_id извлекается из refresh-токена и кладётся в контекст для репозитория.
 func handleRefresh(authService *service.AuthService) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var req refreshRequest
@@ -89,7 +93,7 @@ func handleRefresh(authService *service.AuthService) http.HandlerFunc {
 // handleProfile — GET /auth/profile. Профиль текущего пользователя (из JWT).
 func handleProfile(authService *service.AuthService) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		userID := middleware.GetUserID(r.Context())
+		userID := appctx.GetUserID(r.Context())
 
 		user, err := authService.GetProfile(r.Context(), userID)
 		if err != nil {
@@ -121,7 +125,7 @@ func handleChangePassword(authService *service.AuthService) http.HandlerFunc {
 			return
 		}
 
-		userID := middleware.GetUserID(r.Context())
+		userID := appctx.GetUserID(r.Context())
 		err := authService.ChangePassword(r.Context(), userID, req.OldPassword, req.NewPassword)
 		if err != nil {
 			if errors.Is(err, service.ErrInvalidCredentials) {
@@ -146,6 +150,7 @@ type createUserRequest struct {
 }
 
 // handleCreateUser — POST /admin/users. Создание пользователя (только admin).
+// org_id берётся из контекста (положен JWT middleware).
 func handleCreateUser(authService *service.AuthService) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var req createUserRequest
@@ -169,8 +174,7 @@ func handleCreateUser(authService *service.AuthService) http.HandlerFunc {
 			return
 		}
 
-		orgID := middleware.GetOrgID(r.Context())
-		user, err := authService.CreateUser(r.Context(), orgID, req.Email, req.Password, role)
+		user, err := authService.CreateUser(r.Context(), req.Email, req.Password, role)
 		if err != nil {
 			if errors.Is(err, service.ErrEmailExists) {
 				writeJSON(w, http.StatusConflict, map[string]string{"error": "пользователь с таким email уже существует"})
@@ -185,11 +189,10 @@ func handleCreateUser(authService *service.AuthService) http.HandlerFunc {
 }
 
 // handleListUsers — GET /admin/users. Список пользователей организации.
+// org_id берётся из контекста (положен JWT middleware).
 func handleListUsers(authService *service.AuthService) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		orgID := middleware.GetOrgID(r.Context())
-
-		users, err := authService.ListUsers(r.Context(), orgID)
+		users, err := authService.ListUsers(r.Context())
 		if err != nil {
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "внутренняя ошибка"})
 			return
