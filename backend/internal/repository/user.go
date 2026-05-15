@@ -1,5 +1,5 @@
 // Пакет repository — слой доступа к данным (SQL-запросы через pgx).
-// Каждый метод принимает context и работает с пулом соединений.
+// Каждый метод извлекает org_id из контекста для автоматической фильтрации по организации.
 package repository
 
 import (
@@ -9,6 +9,7 @@ import (
 	// pgxpool — пул соединений PostgreSQL.
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"dms-backend/internal/appctx"
 	"dms-backend/internal/model"
 )
 
@@ -22,20 +23,24 @@ func NewUserRepository(pool *pgxpool.Pool) *UserRepository {
 	return &UserRepository{pool: pool}
 }
 
-// Create вставляет нового пользователя и возвращает его с заполненным ID.
+// Create вставляет нового пользователя. OrgID берётся из контекста.
 func (r *UserRepository) Create(ctx context.Context, user *model.User) error {
+	orgID := appctx.GetOrgID(ctx)
+
 	query := `
 		INSERT INTO users (org_id, email, password_hash, role, is_active)
 		VALUES ($1, $2, $3, $4, $5)
 		RETURNING id, created_at, updated_at`
 
 	return r.pool.QueryRow(ctx, query,
-		user.OrgID, user.Email, user.PasswordHash, user.Role, user.IsActive,
+		orgID, user.Email, user.PasswordHash, user.Role, user.IsActive,
 	).Scan(&user.ID, &user.CreatedAt, &user.UpdatedAt)
 }
 
-// GetByEmail ищет пользователя по email в рамках организации.
-func (r *UserRepository) GetByEmail(ctx context.Context, orgID, email string) (*model.User, error) {
+// GetByEmail ищет пользователя по email в рамках организации из контекста.
+func (r *UserRepository) GetByEmail(ctx context.Context, email string) (*model.User, error) {
+	orgID := appctx.GetOrgID(ctx)
+
 	query := `
 		SELECT id, org_id, email, password_hash, role, is_active, created_at, updated_at
 		FROM users
@@ -52,15 +57,17 @@ func (r *UserRepository) GetByEmail(ctx context.Context, orgID, email string) (*
 	return u, nil
 }
 
-// GetByID возвращает пользователя по UUID.
+// GetByID возвращает пользователя по UUID с фильтрацией по org_id из контекста.
 func (r *UserRepository) GetByID(ctx context.Context, id string) (*model.User, error) {
+	orgID := appctx.GetOrgID(ctx)
+
 	query := `
 		SELECT id, org_id, email, password_hash, role, is_active, created_at, updated_at
 		FROM users
-		WHERE id = $1`
+		WHERE id = $1 AND org_id = $2`
 
 	u := &model.User{}
-	err := r.pool.QueryRow(ctx, query, id).Scan(
+	err := r.pool.QueryRow(ctx, query, id, orgID).Scan(
 		&u.ID, &u.OrgID, &u.Email, &u.PasswordHash,
 		&u.Role, &u.IsActive, &u.CreatedAt, &u.UpdatedAt,
 	)
@@ -70,8 +77,10 @@ func (r *UserRepository) GetByID(ctx context.Context, id string) (*model.User, e
 	return u, nil
 }
 
-// ListByOrg возвращает всех пользователей организации.
-func (r *UserRepository) ListByOrg(ctx context.Context, orgID string) ([]model.User, error) {
+// List возвращает всех пользователей организации из контекста.
+func (r *UserRepository) List(ctx context.Context) ([]model.User, error) {
+	orgID := appctx.GetOrgID(ctx)
+
 	query := `
 		SELECT id, org_id, email, password_hash, role, is_active, created_at, updated_at
 		FROM users
@@ -98,10 +107,12 @@ func (r *UserRepository) ListByOrg(ctx context.Context, orgID string) ([]model.U
 	return users, nil
 }
 
-// UpdatePassword обновляет хеш пароля пользователя.
+// UpdatePassword обновляет хеш пароля пользователя с фильтрацией по org_id из контекста.
 func (r *UserRepository) UpdatePassword(ctx context.Context, userID, passwordHash string) error {
-	query := `UPDATE users SET password_hash = $1, updated_at = now() WHERE id = $2`
-	tag, err := r.pool.Exec(ctx, query, passwordHash, userID)
+	orgID := appctx.GetOrgID(ctx)
+
+	query := `UPDATE users SET password_hash = $1, updated_at = now() WHERE id = $2 AND org_id = $3`
+	tag, err := r.pool.Exec(ctx, query, passwordHash, userID, orgID)
 	if err != nil {
 		return fmt.Errorf("обновление пароля: %w", err)
 	}
@@ -111,8 +122,10 @@ func (r *UserRepository) UpdatePassword(ctx context.Context, userID, passwordHas
 	return nil
 }
 
-// CountByOrg возвращает количество пользователей в организации.
-func (r *UserRepository) CountByOrg(ctx context.Context, orgID string) (int, error) {
+// Count возвращает количество пользователей в организации из контекста.
+func (r *UserRepository) Count(ctx context.Context) (int, error) {
+	orgID := appctx.GetOrgID(ctx)
+
 	var count int
 	err := r.pool.QueryRow(ctx, `SELECT COUNT(*) FROM users WHERE org_id = $1`, orgID).Scan(&count)
 	if err != nil {
