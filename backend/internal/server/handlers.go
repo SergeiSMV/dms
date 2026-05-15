@@ -202,6 +202,53 @@ func handleListUsers(authService *service.AuthService) http.HandlerFunc {
 	}
 }
 
+// --- Organization хендлеры ---
+
+// handleGetOrganization — GET /organization. Текущая организация пользователя.
+func handleGetOrganization(orgService *service.OrgService) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		org, err := orgService.Get(r.Context())
+		if err != nil {
+			writeJSON(w, http.StatusNotFound, map[string]string{"error": "организация не найдена"})
+			return
+		}
+
+		writeJSON(w, http.StatusOK, org)
+	}
+}
+
+// updateOrgRequest — тело запроса PATCH /organization.
+// Указатели позволяют отличить «не передано» от «пустая строка».
+type updateOrgRequest struct {
+	Name     *string          `json:"name"`
+	INN      *string          `json:"inn"`
+	Settings *json.RawMessage `json:"settings"`
+}
+
+// handleUpdateOrganization — PATCH /organization. Обновление данных организации (только admin).
+func handleUpdateOrganization(orgService *service.OrgService) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var req updateOrgRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "невалидный JSON"})
+			return
+		}
+
+		if req.Name == nil && req.INN == nil && req.Settings == nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "нет полей для обновления"})
+			return
+		}
+
+		org, err := orgService.Update(r.Context(), req.Name, req.INN, req.Settings)
+		if err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "внутренняя ошибка"})
+			return
+		}
+
+		writeJSON(w, http.StatusOK, org)
+	}
+}
+
 // --- Утилиты ---
 
 // writeJSON отправляет JSON-ответ с заданным статус-кодом.

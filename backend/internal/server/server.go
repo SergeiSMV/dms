@@ -19,6 +19,7 @@ import (
 // Deps — зависимости, которые нужны серверу для создания маршрутов.
 type Deps struct {
 	AuthService  *service.AuthService
+	OrgService   *service.OrgService
 	JWTManager   *auth.JWTManager
 	DefaultOrgID string // ID организации по умолчанию (on-premise — всегда одна)
 }
@@ -53,10 +54,14 @@ func New(addr string, deps Deps) *http.Server {
 		r.Get("/auth/profile", handleProfile(deps.AuthService))
 		r.Post("/auth/change-password", handleChangePassword(deps.AuthService))
 
+		// Организация: доступна всем авторизованным, обновление — только admin.
+		r.Get("/organization", handleGetOrganization(deps.OrgService))
+
 		// Admin-маршруты: только для роли admin.
 		r.Group(func(r chi.Router) {
 			r.Use(appmw.RequireRole(model.RoleAdmin))
 
+			r.Patch("/organization", handleUpdateOrganization(deps.OrgService))
 			r.Post("/admin/users", handleCreateUser(deps.AuthService))
 			r.Get("/admin/users", handleListUsers(deps.AuthService))
 		})

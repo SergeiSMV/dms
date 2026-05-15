@@ -87,12 +87,16 @@ func main() {
 
 	// Репозиторий → Сервис → Сервер (слои зависят только «вниз»).
 	userRepo := repository.NewUserRepository(dbPool)
+	orgRepo := repository.NewOrgRepository(dbPool)
+
 	authService := service.NewAuthService(userRepo, jwtManager)
+	orgService := service.NewOrgService(orgRepo)
 
 	// --- HTTP-сервер ---
 
 	srv := server.New(":"+cfg.Server.Port, server.Deps{
 		AuthService:  authService,
+		OrgService:   orgService,
 		JWTManager:   jwtManager,
 		DefaultOrgID: seedResult.OrgID,
 	})
